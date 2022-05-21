@@ -4,8 +4,11 @@ package shelly
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
+	url2 "net/url"
+
+	"github.com/adamhassel/errors"
 )
 
 // Schedule is a top-level shelly schedule collection
@@ -29,62 +32,91 @@ type Call struct {
 
 type Schedules []JobSpec
 
-func GetSchedules() (Schedules, error) {
-	url := "http://192.168.0.25/rpc/Schedule.List"
+type State bool
+
+const (
+	StateOn  State = true
+	StateOff State = false
+)
+
+func GetSchedules(dest fmt.Stringer) (Schedules, error) {
+	url := fmt.Sprintf("http://%s/rpc/Schedule.List", dest.String())
 	r, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	body, err := ioutil.ReadAll(r.Body)
 	var schedules Schedule
 	err = json.Unmarshal(body, &schedules)
 
 	return schedules.Jobs, err
 }
 
-func enableDisableSchedules(enable bool, ids ...int) error {
-	url := "http://192.168.0.25/rpc/Schedule.Update"
+func enableDisableSchedules(dest fmt.Stringer, enable bool, ids ...int) error {
 	for _, id := range ids {
-		r, err := http.Get(url + fmt.Sprintf("?id=%d&enable=%t", id, enable))
-		if err != nil {
+		if err := DoRPCCall(dest, "Schedule.Update", map[string]string{"id": fmt.Sprintf("%d", id), "enable": fmt.Sprintf("%t", enable)}); err != nil {
 			return err
-		}
-		defer r.Body.Close()
-		if r.StatusCode != http.StatusOK {
-			body, err := io.ReadAll(r.Body)
-			add := string(body)
-			if err != nil {
-				add = fmt.Sprintf("\nAdditionally, an error occurred while reading return body: %s", err)
-			}
-			return fmt.Errorf("RPC call returned %s (%d) %s", r.Status, r.StatusCode, add)
 		}
 	}
 	return nil
 }
 
-func EnableSchedules(ids ...int) error {
-	return enableDisableSchedules(true, ids...)
+func EnableSchedules(dest fmt.Stringer, ids ...int) error {
+	return enableDisableSchedules(dest, true, ids...)
 }
 
-func DisableSchedules(ids ...int) error {
-	return enableDisableSchedules(false, ids...)
+func DisableSchedules(dest fmt.Stringer, ids ...int) error {
+	return enableDisableSchedules(dest, false, ids...)
 }
 
-func TurnOn() error {
-	url := "http://192.168.0.25/rpc/Switch.Set?id=0&on=true"
-	r, err := http.Get(url)
+// TurnOn sets the Shelly's switch to the "On" state
+func TurnOn(dest fmt.Stringer) error {
+	return SetSwitch(dest, StateOn)
+}
+
+// TurnOff sets the Shelly's switch to the "Off" state
+func TurnOff(dest fmt.Stringer) error {
+	return SetSwitch(dest, StateOff)
+}
+
+// SetSwitch sets the Shelly's switch to the given state
+func SetSwitch(dest fmt.Stringer, state State) error {
+	return DoRPCCall(dest, "Switch.Set", map[string]string{"id": "0", "on": fmt.Sprintf("%t", state)})
+}
+
+func DeleteAllSchedules(dest fmt.Stringer) error {
+	return DoRPCCall(dest, "Schedule.DeleteAll", nil)
+}
+
+func CreateSchedule(dest fmt.Stringer, schedule Schedule) error {
+	return nil
+}
+
+// Do an RPC call towards the shelly
+func DoRPCCall(dest fmt.Stringer, method string, options map[string]string) error {
+	u := url2.URL{
+		Scheme: "http",
+		Host:   dest.String(),
+		Path:   "rpc/" + method,
+	}
+	if options != nil {
+		for k, v := range options {
+			u.Query().Add(k, v)
+		}
+	}
+	r, err := http.Get(u.String())
 	if err != nil {
 		return err
 	}
 	defer r.Body.Close()
 	if r.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(r.Body)
-		add := string(body)
+		body, err := ioutil.ReadAll(r.Body)
+		add := errors.New(string(body))
 		if err != nil {
-			add = fmt.Sprintf("\nAdditionally, an error occurred while reading return body: %s", err)
+			add = errors.Wrap(add, fmt.Errorf("\nAdditionally, an error occurred while reading return body: %w", err))
 		}
-		return fmt.Errorf("RPC call returned %s (%d) %s", r.Status, r.StatusCode, add)
+		return fmt.Errorf("RPC call returned %s (%d) %w", r.Status, r.StatusCode, add)
 	}
 	return nil
 }
