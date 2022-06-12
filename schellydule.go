@@ -3,8 +3,10 @@ package schellydule
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
+	errors2 "github.com/adamhassel/errors"
 	sch "github.com/adamhassel/schedule"
 	"github.com/adamhassel/schellydule/shelly"
 	"github.com/robfig/cron/v3"
@@ -27,6 +29,17 @@ func (s state) String() string {
 	return "<unknown>"
 }
 
+func (s state) State() shelly.State {
+	switch s {
+	case stateOn:
+		return shelly.StateOn
+	case stateOff:
+		return shelly.StateOff
+	default:
+		return shelly.StateOff
+	}
+}
+
 func parseBool(s bool) state {
 	if s {
 		return stateOn
@@ -38,6 +51,16 @@ type schedule struct {
 	// setState is the state the schedule sets
 	setState state
 	trigger  time.Time
+}
+
+// State returns the setstate the schedule sets
+func (s schedule) State() state {
+	return s.setState
+}
+
+// TriggerTime returns the time the schedules is triggered
+func (s schedule) TriggerTime() time.Time {
+	return s.trigger
 }
 
 type schedules []schedule
@@ -105,6 +128,7 @@ func ScheduleToPaired(in shelly.Schedules) ([]PairedSchedule, error) {
 	return ss.Paired()
 }
 
+/*
 func PowerPricesSchedule(h sch.HourPrices) []PairedSchedule {
 	e := make([]PairedSchedule, 0)
 	var ss PairedSchedule
@@ -130,4 +154,78 @@ func PowerPricesSchedule(h sch.HourPrices) []PairedSchedule {
 		new = true
 	}
 	return e
+}
+*/
+
+// FindMatching will search s for the JobSpec mathcing j. For example, if j is an
+// 'on' Jobspec, it will return the Jobspec that turns it back off. If j is an
+// 'off' JobSpec, it'll return the jobspec that turned it on
+func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) {
+	sched, err := ParseSchedule(j)
+	if err != nil {
+		return shelly.JobSpec{}, err
+	}
+	searchstate := !sched.State().State()
+	indexes := make([]int, 0)
+	for i, e := range s {
+		job, err := ParseSchedule(e)
+		if err != nil {
+			return shelly.JobSpec{}, err
+		}
+		if job.State().State() != searchstate {
+			continue
+		}
+		switch shelly.State(searchstate) {
+		case shelly.StateOff:
+			if job.TriggerTime().After(sched.TriggerTime()) {
+				indexes = append(indexes, i)
+				continue
+			}
+		case shelly.StateOn:
+			if job.TriggerTime().Before(sched.TriggerTime()) {
+				indexes = append(indexes, i)
+				continue
+			}
+		}
+	}
+	// find the correct time (which is the one with the highest/lowest, depending on mathing) in the list
+	if len(indexes) == 0 {
+		return shelly.JobSpec{}, errors2.New("no matching jobspec")
+	}
+	sort.Ints(indexes)
+	var i int
+	switch shelly.State(searchstate) {
+	case shelly.StateOff:
+		i = indexes[0]
+	case shelly.StateOn:
+		i = indexes[len(indexes)-1]
+	}
+	return s[i], nil
+}
+
+// convert a list of cronjobs to a schedule.Schedule (a list of start/stop times)
+func Schedule(s shelly.Schedules) (sch.Schedule, error) {
+	var rv = make(sch.Schedule, 0, len(s)/2)
+	for _, job := range s {
+		js, err := ParseSchedule(job)
+		if js.State().State() == shelly.StateOff {
+			continue // We're ignoring off switches in this context, since we'll find them by matching from the on switches
+		}
+		if err != nil {
+			return nil, err
+		}
+		var e sch.Entry
+		match, err := FindMatching(job, s)
+		if err != nil {
+			return nil, err
+		}
+
+		e.Start = js.TriggerTime()
+		e.Stop, err = match.Time()
+		if err != nil {
+			return nil, err
+		}
+		rv = append(rv, e)
+	}
+	return rv, nil
 }

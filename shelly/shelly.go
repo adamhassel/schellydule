@@ -7,8 +7,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	url2 "net/url"
+	"time"
 
 	"github.com/adamhassel/errors"
+	"github.com/robfig/cron/v3"
 )
 
 // Schedule is a top-level shelly schedule collection
@@ -51,6 +53,16 @@ func GetSchedules(dest fmt.Stringer) (Schedules, error) {
 	err = json.Unmarshal(body, &schedules)
 
 	return schedules.Jobs, err
+}
+
+// Time returns the timestamp for the job (with today's date)
+func (j JobSpec) Time() (time.Time, error) {
+	today := time.Now().Truncate(24 * time.Hour) // truncate to midnight today
+	t, err := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Second).Parse(j.Timespec)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t.Next(today), nil
 }
 
 func enableDisableSchedules(dest fmt.Stringer, enable bool, ids ...int) error {

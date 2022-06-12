@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ var confFile string
 var conf config.Config
 
 func init() {
-	flag.StringVar(&confFile, "c", "power.conf", "location of configuration file.")
+	flag.StringVar(&confFile, "c", "schedule.conf", "location of configuration file.")
 }
 
 func main() {
@@ -38,10 +39,12 @@ func main() {
 	http.HandleFunc("/enableSchedule", enableScheduleHandler)
 	http.HandleFunc("/disableSchedule", disableScheduleHandler)
 	http.HandleFunc("/renewSchedules", renewSchedulesHandler)
+	http.HandleFunc("/showSchedules", showSchedulesHandler)
+
 	log.Fatal(http.ListenAndServe(":8080", nil))
 
 	/*
-		s := getSchedule(8, 2)
+		s := generateSchedule(8, 2)
 		p := schellydule.PowerPricesSchedule(s)
 
 		for _, e := range p {
@@ -178,10 +181,32 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	s := getSchedule(hours, darkHours)
+	_ = generateSchedule(hours, darkHours)
 }
 
-func getSchedule(length, maxDark int) schedule.HourPrices {
+// showSchedulesHandler is a GET controller, that returns the currently configured schedule
+func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
+	ip, err := getIP(req.RemoteAddr)
+	ip = net.ParseIP("192.168.0.26")
+	if err != nil {
+		setStatusMsg(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	schedules, err := shelly.GetSchedules(ip)
+	parsed, err := schellydule.Schedule(schedules)
+	if err != nil {
+		setStatusMsg(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var out []byte
+	if out, err = json.Marshal(parsed); err != nil {
+		setStatusMsg(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	io.WriteString(w, string(out))
+}
+
+func generateSchedule(length, maxDark int) schedule.HourPrices {
 	conf := config.GetConf()
 	tomorrow := schedule.Hour(time.Now().Add(24*time.Hour), 0)
 	prices, err := power.Prices(tomorrow, tomorrow.Add(24*time.Hour), conf.MID(), conf.Token())
