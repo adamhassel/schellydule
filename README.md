@@ -15,4 +15,5 @@ Feature suggestions:
 * Configuration of shelly IP
 * Automatic schedule length based on pool size and pump effect (for scheduling pool pump schedules, which is the motivation for the project in the first place)
 
-This is still a WIP, so you probably don't want to use it yet ;)
+This is still a WIP, so you probably don't want to use it yet...
+Also, if you have a better name suggestion, let me know :D
