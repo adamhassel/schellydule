@@ -20,9 +20,11 @@ import (
 
 var confFile string
 var conf config.Config
+var port int
 
 func init() {
 	flag.StringVar(&confFile, "c", "schedule.conf", "location of configuration file.")
+	flag.IntVar(&port, "p", 8080, "port to listen on")
 }
 
 func main() {
@@ -36,12 +38,12 @@ func main() {
 		log.Fatal("MID or Token invalid")
 	}
 
-	http.HandleFunc("/enableSchedule", enableScheduleHandler)
-	http.HandleFunc("/disableSchedule", disableScheduleHandler)
+	http.HandleFunc("/enableSchedules", enableScheduleHandler)
+	http.HandleFunc("/disableSchedules", disableScheduleHandler)
 	http.HandleFunc("/renewSchedules", renewSchedulesHandler)
 	http.HandleFunc("/showSchedules", showSchedulesHandler)
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 
 	/*
 		s := generateSchedule(8, 2)
@@ -70,8 +72,8 @@ func main() {
 }
 
 // getIP returns the IP where the request shiould go.
-// TODO: allow config override
-func getIP(remoteAddr string) (net.IP, error) {
+// TODO: allow url param override
+func parseIP(remoteAddr string) (net.IP, error) {
 	ipaddr, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return nil, err
@@ -79,9 +81,22 @@ func getIP(remoteAddr string) (net.IP, error) {
 	return net.ParseIP(ipaddr), nil
 }
 
+func getIP(req *http.Request, allowInQuery bool) (net.IP, error) {
+	query := req.URL.Query()
+	ip := net.ParseIP(query.Get("ip"))
+	if ip == nil || !allowInQuery {
+		var err error
+		ip, err = parseIP(req.RemoteAddr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ip, nil
+}
+
 func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	// find the originating IP, where we'll be sending the callbacks
-	ip, err := getIP(req.RemoteAddr)
+	ip, err := getIP(req, true)
 	if err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
 		return
@@ -96,11 +111,15 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(paired)
 	//  2. Determine if the schedules currently demand on or off
 	now := time.Now()
 	var on bool
+	fmt.Printf("Now is %s\n", now.Format("15:04"))
 	for _, p := range paired {
+		fmt.Printf("On at %s, off at %s\n", p.On.Format("15:04"), p.Off.Format("15:04"))
 		if now.After(p.On) && now.Before(p.Off) {
+			fmt.Printf("%s is after %s, but still before %s", now.Format("15:04"), p.On.Format("15:04"), p.Off.Format("15:04"))
 			on = true
 			break
 		}
@@ -124,7 +143,7 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	fmt.Println("schedule on")
 }
 func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
-	ip, err := getIP(req.RemoteAddr)
+	ip, err := getIP(req, true)
 	if err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
 		return
@@ -132,6 +151,7 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	// 1. Get list of all schedules
 	schedules, err := shelly.GetSchedules(ip)
 	if err != nil {
+		fmt.Println("getschedules", err)
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
@@ -162,6 +182,11 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 // Should only be called after 2300 local time, and will return 400 if not
 // (unless override active)
 func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
+	ip, err := getIP(req, true)
+	if err != nil {
+		setStatusMsg(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// get number of hours and max dark hours from request
 	query := req.URL.Query()
 	hours, err := strconv.Atoi(query.Get("hours"))
@@ -182,16 +207,27 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	_ = generateSchedule(hours, darkHours)
+
+	//Delete all schedules
+	if err := shelly.DeleteAllSchedules(ip); err != nil {
+		setStatusMsg(w, http.StatusBadGateway, err)
+		return
+	}
+	/*
+		if err := shelly.CreateSchedule(ip, hp.Schedule()); err != nil {
+
+		}
+
+	*/
 }
 
 // showSchedulesHandler is a GET controller, that returns the currently configured schedule
 func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
-	ip, err := getIP(req.RemoteAddr)
-	ip = net.ParseIP("192.168.0.26")
+	ip, err := getIP(req, true)
 	if err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
-		return
 	}
+
 	schedules, err := shelly.GetSchedules(ip)
 	parsed, err := schellydule.Schedule(schedules)
 	if err != nil {
@@ -199,7 +235,7 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var out []byte
-	if out, err = json.Marshal(parsed); err != nil {
+	if out, err = json.Marshal(parsed.Strings()); err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -226,7 +262,18 @@ func generateScheduleHandler(w http.ResponseWriter, req *http.Request) {
 
 }
 
-func setStatusMsg(w http.ResponseWriter, status int, msg string) {
+func setStatusMsg(w http.ResponseWriter, status int, msg interface{}) {
+	var m string
+	switch s := msg.(type) {
+	case error:
+		m = s.Error()
+	case string:
+		m = s
+	case fmt.Stringer:
+		m = s.String()
+	case []byte:
+		m = string(s)
+	}
 	w.WriteHeader(status)
-	w.Write([]byte(msg))
+	w.Write([]byte(m))
 }

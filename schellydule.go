@@ -10,6 +10,7 @@ import (
 	sch "github.com/adamhassel/schedule"
 	"github.com/adamhassel/schellydule/shelly"
 	"github.com/robfig/cron/v3"
+	"github.com/thlib/go-timezone-local/tzlocal"
 )
 
 type state uint
@@ -82,14 +83,34 @@ func ParseSchedule(s shelly.JobSpec) (schedule, error) {
 		}
 	}
 
-	t, err := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Second).Parse(s.Timespec)
+	// Get time zone of
+	tz, loc, err := timeZone()
 	if err != nil {
 		return schedule{}, err
 	}
+	timespec := "TZ=" + tz + " " + s.Timespec
+
+	t, err := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Second).Parse(timespec)
+	if err != nil {
+		return schedule{}, err
+	}
+
 	midnight, _ := time.Parse("060102", time.Now().Format("060102"))
-	rv.trigger = t.Next(midnight)
+	rv.trigger = t.Next(midnight).In(loc)
 
 	return rv, nil
+}
+
+func timeZone() (string, *time.Location, error) {
+	tz, err := tzlocal.RuntimeTZ()
+	if err != nil {
+		return "", nil, err
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return "", nil, err
+	}
+	return tz, loc, nil
 }
 
 func (ss schedules) Paired() ([]PairedSchedule, error) {
@@ -229,3 +250,12 @@ func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 	}
 	return rv, nil
 }
+
+/*/ Convert a Schedule to a Shelly schedule
+func ShellySchedule(s sch.Schedule) shelly.Schedule {
+	for _, e := range s {
+
+	}
+}
+
+*/

@@ -18,6 +18,8 @@ type Schedule struct {
 	Jobs Schedules `json:"jobs"`
 }
 
+type Schedules []JobSpec
+
 // JobSpec is a Shelly schedule trigger
 type JobSpec struct {
 	Id       int    `json:"id"`
@@ -26,13 +28,11 @@ type JobSpec struct {
 	Calls    []Call `json:"calls"`
 }
 
-// Call is what happens when the schedule time rolls over
+// Call is what the job should do
 type Call struct {
 	Method string                 `json:"method"`
 	Params map[string]interface{} `json:"params,omitempty"`
 }
-
-type Schedules []JobSpec
 
 type State bool
 
@@ -41,17 +41,11 @@ const (
 	StateOff State = false
 )
 
-func GetSchedules(dest fmt.Stringer) (Schedules, error) {
-	url := fmt.Sprintf("http://%s/rpc/Schedule.List", dest.String())
-	r, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Body.Close()
-	body, err := ioutil.ReadAll(r.Body)
+func GetSchedules(ip fmt.Stringer) (Schedules, error) {
+	body, _, err := DoRPCCall(ip, "Schedule.List", nil)
 	var schedules Schedule
+	fmt.Println(string(body))
 	err = json.Unmarshal(body, &schedules)
-
 	return schedules.Jobs, err
 }
 
@@ -67,7 +61,7 @@ func (j JobSpec) Time() (time.Time, error) {
 
 func enableDisableSchedules(dest fmt.Stringer, enable bool, ids ...int) error {
 	for _, id := range ids {
-		if err := DoRPCCall(dest, "Schedule.Update", map[string]string{"id": fmt.Sprintf("%d", id), "enable": fmt.Sprintf("%t", enable)}); err != nil {
+		if _, _, err := DoRPCCall(dest, "Schedule.Update", map[string]string{"id": fmt.Sprintf("%d", id), "enable": fmt.Sprintf("%t", enable)}); err != nil {
 			return err
 		}
 	}
@@ -94,41 +88,46 @@ func TurnOff(dest fmt.Stringer) error {
 
 // SetSwitch sets the Shelly's switch to the given state
 func SetSwitch(dest fmt.Stringer, state State) error {
-	return DoRPCCall(dest, "Switch.Set", map[string]string{"id": "0", "on": fmt.Sprintf("%t", state)})
+	_, _, err := DoRPCCall(dest, "Switch.Set", map[string]string{"id": "0", "on": fmt.Sprintf("%t", state)})
+	return err
 }
 
 func DeleteAllSchedules(dest fmt.Stringer) error {
-	return DoRPCCall(dest, "Schedule.DeleteAll", nil)
+	_, _, err := DoRPCCall(dest, "Schedule.DeleteAll", nil)
+	return err
 }
 
 func CreateSchedule(dest fmt.Stringer, schedule Schedule) error {
 	return nil
 }
 
-// Do an RPC call towards the shelly
-func DoRPCCall(dest fmt.Stringer, method string, options map[string]string) error {
+// Do an RPC call towards the shelly. Returns bodyu (or nil if empty), http resonse code and an error
+func DoRPCCall(dest fmt.Stringer, method string, options map[string]string) ([]byte, int, error) {
 	u := url2.URL{
 		Scheme: "http",
 		Host:   dest.String(),
 		Path:   "rpc/" + method,
 	}
-	if options != nil {
+	if len(options) > 0 {
+		values := u.Query()
 		for k, v := range options {
-			u.Query().Add(k, v)
+			values.Add(k, v)
 		}
+		u.RawQuery = values.Encode()
 	}
+	fmt.Println(u.String())
 	r, err := http.Get(u.String())
 	if err != nil {
-		return err
+		return nil, http.StatusInternalServerError, err
 	}
 	defer r.Body.Close()
+	body, err := ioutil.ReadAll(r.Body)
 	if r.StatusCode != http.StatusOK {
-		body, err := ioutil.ReadAll(r.Body)
 		add := errors.New(string(body))
 		if err != nil {
 			add = errors.Wrap(add, fmt.Errorf("\nAdditionally, an error occurred while reading return body: %w", err))
 		}
-		return fmt.Errorf("RPC call returned %s (%d) %w", r.Status, r.StatusCode, add)
+		return body, r.StatusCode, fmt.Errorf("RPC call returned %s (%d) %w", r.Status, r.StatusCode, add)
 	}
-	return nil
+	return body, http.StatusOK, nil
 }
