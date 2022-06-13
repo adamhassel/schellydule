@@ -8,6 +8,7 @@ Features (either done or planned out):
 * Endpoint to generate a new schedule, and to toggle if schedules are enabled or not
 * Endpoint to return the current schedule, so you can display it on a dashboard or similar
 * Autodetection of shelly IP for callbacks
+* Support for enabling/disabling schedules via an HTTP call -- I use this with a flip switch to quickly disable schedules if I want to run the appliance manually (yeah, I'll explain how it works eventually).
 * Price estimate, given the effect of the appliance connected to the Shelly
 
 Feature suggestions:
