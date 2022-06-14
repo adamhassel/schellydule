@@ -132,6 +132,9 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	//  4. Enable schedule
 	var ids = make([]int, len(schedules))
 	for i, s := range schedules {
+		if !s.HasMethod("switch.set") {
+			continue
+		}
 		ids[i] = s.Id
 	}
 	if err := shelly.EnableSchedules(ip, ids...); err != nil {
@@ -160,6 +163,9 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	// get IDs
 	var ids = make([]int, len(schedules))
 	for i, s := range schedules {
+		if !s.HasMethod("switch.set") {
+			continue
+		}
 		ids[i] = s.Id
 	}
 	if err := shelly.DisableSchedules(ip, ids...); err != nil {
@@ -194,6 +200,12 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		log.Println("no hours, defaulting to 12")
 		hours = 12
 	}
+
+	offset, err := strconv.Atoi(query.Get("offset"))
+	if err != nil {
+		log.Println("no offset, defaulting to 24")
+		offset = 24
+	}
 	darkHours, err := strconv.Atoi(query.Get("dark"))
 	if err != nil {
 		log.Println("no darkHours, defaulting to 3")
@@ -206,19 +218,28 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	_ = generateSchedule(hours, darkHours)
+	hp := generateSchedule(hours, darkHours, time.Duration(offset)*time.Hour)
+	enable, err := shelly.GetInputState(ip)
+	if err != nil {
+		setStatusMsg(w, http.StatusBadGateway, err)
+	}
 
+	s := shelly.ShellySchedule(hp.Schedule(), enable)
+	fmt.Println(hp.Schedule().String())
 	//Delete all schedules
 	if err := shelly.DeleteAllSchedules(ip); err != nil {
 		setStatusMsg(w, http.StatusBadGateway, err)
 		return
 	}
-	/*
-		if err := shelly.CreateSchedule(ip, hp.Schedule()); err != nil {
+	if err := shelly.CreateSchedule(ip, s); err != nil {
+		setStatusMsg(w, http.StatusBadGateway, err)
+		return
+	}
+	if err := shelly.CreateScheduleRefresherSchedule(ip, port); err != nil {
+		setStatusMsg(w, http.StatusBadGateway, err)
+		return
+	}
 
-		}
-
-	*/
 }
 
 // showSchedulesHandler is a GET controller, that returns the currently configured schedule
@@ -242,9 +263,9 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	io.WriteString(w, string(out))
 }
 
-func generateSchedule(length, maxDark int) schedule.HourPrices {
+func generateSchedule(length, maxDark int, offset time.Duration) schedule.HourPrices {
 	conf := config.GetConf()
-	tomorrow := schedule.Hour(time.Now().Add(24*time.Hour), 0)
+	tomorrow := schedule.Hour(time.Now().Add(offset), 0)
 	prices, err := power.Prices(tomorrow, tomorrow.Add(24*time.Hour), conf.MID(), conf.Token())
 	if err != nil {
 		log.Fatal(err)

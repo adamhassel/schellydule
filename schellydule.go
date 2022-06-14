@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	errors2 "github.com/adamhassel/errors"
@@ -74,7 +75,7 @@ type PairedSchedule struct {
 func ParseSchedule(s shelly.JobSpec) (schedule, error) {
 	var rv schedule
 	for _, c := range s.Calls {
-		if c.Method == "switch.set" {
+		if strings.ToLower(c.Method) == "switch.set" {
 			state, ok := c.Params["on"].(bool)
 			if ok {
 				rv.setState = parseBool(state)
@@ -95,9 +96,17 @@ func ParseSchedule(s shelly.JobSpec) (schedule, error) {
 		return schedule{}, err
 	}
 
-	midnight, _ := time.Parse("060102", time.Now().Format("060102"))
+	midnight := sch.Hour(time.Now(), 0)
 	rv.trigger = t.Next(midnight).In(loc)
 
+	// Special case if 't.next' is supposed to run at midnight, which will set
+	// trigger's date to 24 hours from now. This is not important for the shelly,
+	// since dates are unimportant, but it's important internally because we do time
+	// comparisons, and when there're different dates, which should be disregarded,
+	// that creates issues.
+	if rv.trigger.Day() != midnight.Day() {
+		rv.trigger = rv.trigger.AddDate(0, 0, -1)
+	}
 	return rv, nil
 }
 
@@ -140,6 +149,9 @@ func (ss schedules) Paired() ([]PairedSchedule, error) {
 func ScheduleToPaired(in shelly.Schedules) ([]PairedSchedule, error) {
 	var ss schedules
 	for _, s := range in {
+		if !s.HasMethod("switch.set") {
+			continue
+		}
 		tmp, err := ParseSchedule(s)
 		if err != nil {
 			return nil, err
@@ -189,6 +201,9 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 	searchstate := !sched.State().State()
 	indexes := make([]int, 0)
 	for i, e := range s {
+		if !e.HasMethod("switch.set") {
+			continue
+		}
 		job, err := ParseSchedule(e)
 		if err != nil {
 			return shelly.JobSpec{}, err
@@ -196,7 +211,7 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 		if job.State().State() != searchstate {
 			continue
 		}
-		switch shelly.State(searchstate) {
+		switch searchstate {
 		case shelly.StateOff:
 			if job.TriggerTime().After(sched.TriggerTime()) {
 				indexes = append(indexes, i)
@@ -209,7 +224,7 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 			}
 		}
 	}
-	// find the correct time (which is the one with the highest/lowest, depending on mathing) in the list
+	// find the correct time (which is the one with the highest/lowest, depending on matching) in the list
 	if len(indexes) == 0 {
 		return shelly.JobSpec{}, errors2.New("no matching jobspec")
 	}
@@ -228,13 +243,17 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 	var rv = make(sch.Schedule, 0, len(s)/2)
 	for _, job := range s {
-		js, err := ParseSchedule(job)
-		if js.State().State() == shelly.StateOff {
-			continue // We're ignoring off switches in this context, since we'll find them by matching from the on switches
+		if !job.HasMethod("switch.set") {
+			continue
 		}
+		js, err := ParseSchedule(job)
 		if err != nil {
 			return nil, err
 		}
+		if js.State().State() == shelly.StateOff {
+			continue // We're ignoring off switches in this context, since we'll find them by matching from the on switches
+		}
+
 		var e sch.Entry
 		match, err := FindMatching(job, s)
 		if err != nil {
