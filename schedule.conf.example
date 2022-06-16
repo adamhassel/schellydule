@@ -1,0 +1,17 @@
+# This is the API token you get from eloverblik.dk. Mandatory
+token = [API token]
+
+# mid is the measurement point id of your power meter. Mandatory
+mid = [measurement point id]
+
+# darkhours is the maximum number of hours allowed in the schedule between sundown and sunup. Optional, default 3
+# darkhours = 3
+
+# hours is the total number of hours in the schedule, including darkhours. Optional, default 12
+# hours = 12
+
+# port represents the listeing port of the REST rpc service. Optional, default 8080
+# port = 8080
+
+# shelly_ip is the IP address of your shelly relay. Optional, default: none, autodetected
+# shelly_ip = 192.168.1.33
