@@ -18,7 +18,8 @@ Feature suggestions:
 * Price estimate, given the effect of the appliance connected to the Shelly, possibly with auto estimation for Shelly PM models, which seem to keep power usage stats.
 
 
-This is still a WIP, so you probably don't want to use it yet...
+This is still a WIP, so there are probably a bunch of bugs.
+
 Also, if you have a better name suggestion, let me know :D
 
 ## Prerequisites
@@ -57,6 +58,12 @@ to the Shelly.
 
 ![Wiring diagram](wiring.png?raw=true "Wiring")
 
+If you don't want or need to disable/enable the schedules with a switch, you
+can omit the "Line" connection into the "SW" port. You can control this with a
+web hook manually however you want, but I find it convenient that there's a
+physical switch right next to my pool pump, that allows me to override
+schedules...
+
 I'll leave getting the Shelly connected to your Wifi (and making sure you have
 WiFi coverage in your pump room) as an exercise forthe reader.
 
@@ -70,7 +77,10 @@ WiFi coverage in your pump room) as an exercise forthe reader.
 
 `[server:port]` is of course the IP/hostname and port of the computer where you're running this webservice.
 
-If you only want to run the Shelly schedule, and don't want the option to disable and enable it, this is purely optional.
+If you only want to run the Shelly schedule, and don't want the option to
+disable and enable it with a switch, this is purely optional. As mentioned
+above, you can call the `enable/disableSchedules` endpoints directly however
+you want.
 
 ### Initial schedule generation
 
@@ -94,13 +104,18 @@ Now, start the service:
 
 From a random computer, make a call to the service to set up the first schedule:
 
-	$ curl "http://[server:port]/generateSchedule?ip=[shelly_ip]"
+	$ curl "http://[server:port]/generateSchedule?override=true&offset=0&ip=[shelly_ip]"
 
 Again, `[server:port]` is of course the IP/hostname and port of the computer
 where you're running this webservice.
 
 Note that if you have configured the Shelly's IP address in the config file,
-the `?ip=...` part in the address is not necessary.
+the `&ip=...` part in the address is not necessary.
+
+The other options are, for reference:
+
+* `override` overrides the restriction on the endpoint to only run after 23:00. This is to not inadvertently interfere with the current day's schedule.
+* `offset=0` ensures that the schedule you're setting up is for today, rather than tomorrow. Because prices are not available for the next day until as late as 14:00, running without this option too early in the day, may yield an empty schedule.
 
 That's it! You're all set! The schedules will automatically regenerate daily at 23:30.
 
