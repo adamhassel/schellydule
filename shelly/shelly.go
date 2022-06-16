@@ -9,7 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-	url2 "net/url"
+	"net/url"
 	"strings"
 	"time"
 
@@ -163,7 +163,6 @@ func CreateSchedule(dest fmt.Stringer, s Schedule) error {
 			return err
 		}
 		fmt.Println(string(reqBody))
-		//continue
 		if _, _, err := DoRPCCall(dest, "POST", "Schedule.Create", nil, reqBody); err != nil {
 			return err
 		}
@@ -219,7 +218,7 @@ func GetInputState(dest fmt.Stringer) (bool, error) {
 
 // DoRPCCall calls RPC endpoints towards the Shelly. Returns body (or nil if empty), http response code and an error
 func DoRPCCall(dest fmt.Stringer, httpMethod, method string, options map[string]string, reqBody []byte) ([]byte, int, error) {
-	u := url2.URL{
+	u := url.URL{
 		Scheme: "http",
 		Host:   dest.String(),
 		Path:   "rpc/" + method,

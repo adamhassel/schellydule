@@ -84,7 +84,7 @@ func ParseSchedule(s shelly.JobSpec) (schedule, error) {
 		}
 	}
 
-	// Get time zone of
+	// Get time zone of server
 	tz, loc, err := timeZone()
 	if err != nil {
 		return schedule{}, err
@@ -128,7 +128,6 @@ func (ss schedules) Paired() ([]PairedSchedule, error) {
 	if len(ss)%2 != 0 {
 		return nil, errors.New("uneven list item numbers")
 	}
-	fmt.Printf("%+v\n", ss)
 	// because we know the list is even-length, we can at least do the first things
 	// without checking (since it can be 0 or 2+ long, and if zero, the loop never
 	// iterates)
@@ -160,35 +159,6 @@ func ScheduleToPaired(in shelly.Schedules) ([]PairedSchedule, error) {
 	}
 	return ss.Paired()
 }
-
-/*
-func PowerPricesSchedule(h sch.HourPrices) []PairedSchedule {
-	e := make([]PairedSchedule, 0)
-	var ss PairedSchedule
-	var l = len(h)
-	var new bool
-	for i, hp := range h {
-		if i == 0 || new {
-			ss.On, _ = time.Parse("15", fmt.Sprintf("%d", hp.Hour))
-			new = false
-		}
-		if i == l-1 {
-			// last iteration
-			ss.Off, _ = time.Parse("15", fmt.Sprintf("%d", hp.Hour+1))
-			e = append(e, ss)
-			break
-		}
-		// If the next entry is the next hour, just skip.
-		if h[i+1].Hour == hp.Hour+1 {
-			continue
-		}
-		ss.Off, _ = time.Parse("15", fmt.Sprintf("%d", hp.Hour+1))
-		e = append(e, ss)
-		new = true
-	}
-	return e
-}
-*/
 
 // FindMatching will search s for the JobSpec mathcing j. For example, if j is an
 // 'on' Jobspec, it will return the Jobspec that turns it back off. If j is an
@@ -239,7 +209,7 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 	return s[i], nil
 }
 
-// convert a list of cronjobs to a schedule.Schedule (a list of start/stop times)
+// Schedule converts a list of cronjobs to a schedule.Schedule (a list of start/stop times)
 func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 	var rv = make(sch.Schedule, 0, len(s)/2)
 	for _, job := range s {
@@ -269,12 +239,3 @@ func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 	}
 	return rv, nil
 }
-
-/*/ Convert a Schedule to a Shelly schedule
-func ShellySchedule(s sch.Schedule) shelly.Schedule {
-	for _, e := range s {
-
-	}
-}
-
-*/
