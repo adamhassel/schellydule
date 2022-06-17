@@ -82,6 +82,10 @@ disable and enable it with a switch, this is purely optional. As mentioned
 above, you can call the `enable/disableSchedules` endpoints directly however
 you want.
 
+**NOTE** Calling the `disableSchedules` endpoint will always turn on the power,
+so it can be controlled with a Master switch, as labelled in the diagram.
+Calling `enableSchedules` will set the power according to the schedule.
+
 ### Initial schedule generation
 
 You'll need two pieces of information in order to obtain the power prices used:
@@ -121,7 +125,7 @@ That's it! You're all set! The schedules will automatically regenerate daily at 
 
 Check the schedule generated in the Shelly webui (the "Schedules" tab), or by checking the webservice:
 
-	$ curl "http://[shelly_ip]/rpc/Schedules.List
+	$ curl http://[shelly_ip]/rpc/Schedules.List
 
 or probably a bit more readable with:
 
