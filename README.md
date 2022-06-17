@@ -104,7 +104,7 @@ Now, start the service:
 
 From a random computer, make a call to the service to set up the first schedule:
 
-	$ curl "http://[server:port]/generateSchedule?override=true&offset=0&ip=[shelly_ip]"
+	$ curl "http://[server:port]/renewSchedule?override=true&offset=0&ip=[shelly_ip]"
 
 Again, `[server:port]` is of course the IP/hostname and port of the computer
 where you're running this webservice.
