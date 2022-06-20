@@ -108,7 +108,7 @@ Now, start the service:
 
 From a random computer, make a call to the service to set up the first schedule:
 
-	$ curl "http://[server:port]/renewSchedule?override=true&offset=0&ip=[shelly_ip]"
+	$ curl "http://[server:port]/renewSchedule?override=true&ip=[shelly_ip]"
 
 Again, `[server:port]` is of course the IP/hostname and port of the computer
 where you're running this webservice.
@@ -116,12 +116,11 @@ where you're running this webservice.
 Note that if you have configured the Shelly's IP address in the config file,
 the `&ip=...` part in the address is not necessary.
 
-The other options are, for reference:
+The other option is, for reference:
 
-* `override` overrides the restriction on the endpoint to only run after 23:00. This is to not inadvertently interfere with the current day's schedule.
-* `offset=0` ensures that the schedule you're setting up is for today, rather than tomorrow. Because prices are not available for the next day until as late as 14:00, running without this option too early in the day, may yield an empty schedule.
+* `override` overrides the restriction on the endpoint to only run between 00:00 and 01:00. This is to not inadvertently interfere with the current day's schedule.
 
-That's it! You're all set! The schedules will automatically regenerate daily at 23:30.
+That's it! You're all set! The schedules will automatically regenerate daily at 00:01.
 
 Check the schedule generated in the Shelly webui (the "Schedules" tab), or by checking the webservice:
 

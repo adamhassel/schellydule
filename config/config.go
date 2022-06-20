@@ -91,7 +91,6 @@ func (c *Config) Load(filename string) error {
 	c.darkHours = defaultValue(d.DarkHours, 3)
 	c.hours = defaultValue(d.Hours, 12)
 	c.port = d.Port
-
 	return nil
 }
 

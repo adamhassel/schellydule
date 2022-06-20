@@ -53,6 +53,12 @@ type schedule struct {
 	// setState is the state the schedule sets
 	setState state
 	trigger  time.Time
+	cost     float64
+}
+
+// Cost returns the cost of the schedule's runtime
+func (s schedule) Cost() float64 {
+	return s.cost
 }
 
 // State returns the setstate the schedule sets
@@ -79,8 +85,12 @@ func ParseSchedule(s shelly.JobSpec) (schedule, error) {
 			state, ok := c.Params["on"].(bool)
 			if ok {
 				rv.setState = parseBool(state)
-				break
 			}
+			cost, ok := c.Params["cost"].(float64)
+			if ok {
+				rv.cost = cost
+			}
+			break
 		}
 	}
 
@@ -232,6 +242,7 @@ func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 
 		e.Start = js.TriggerTime()
 		e.Stop, err = match.Time()
+		//e.Cost = js.Cost()
 		if err != nil {
 			return nil, err
 		}

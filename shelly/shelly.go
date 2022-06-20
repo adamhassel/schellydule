@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -70,8 +69,9 @@ func ShellySchedule(in schedule.Schedule, enable bool) Schedule {
 			Calls: []Call{{
 				Method: "Switch.Set",
 				Params: map[string]interface{}{
-					"id": 0,
-					"on": true,
+					"id":   0,
+					"on":   true,
+					"cost": se.Cost,
 				}},
 			},
 		}
@@ -170,32 +170,34 @@ func CreateSchedule(dest fmt.Stringer, s Schedule) error {
 	return nil
 }
 
-func getOutboundIP() net.IP {
+func getOutboundIP() (net.IP, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-	return localAddr.IP
+	return localAddr.IP, nil
 }
 
-// CreateScheduleRefresherSchedule will make sure that the schedules are refreshed every day @ 23.30
+// CreateScheduleRefresherSchedule will make sure that the schedules are refreshed every day @ 23.55
 func CreateScheduleRefresherSchedule(dest fmt.Stringer, myPort int) error {
-	t := schedule.Hour(time.Now(), 23).Add(30 * time.Minute)
-	fmt.Println(t)
-	fmt.Println(t.Format(cronFormat))
+	t := schedule.Hour(time.Now(), 0).Add(1 * time.Minute)
+	ip, err := getOutboundIP()
+	if err != nil {
+		return err
+	}
 	refresh := JobSpec{
 		Id:     refresherID,
 		Enable: true,
 		// Set the timespec to be tomorrow at 23:30: First add 24 hours, to be sure it's tomorrow. Then truncate to midnight, and finally add 23:30
-		Timespec: schedule.Hour(time.Now(), 23).Add(30 * time.Minute).Format(cronFormat),
+		Timespec: t.Format(cronFormat),
 		Calls: []Call{{
 			Method: "HTTP.Get",
 			Params: map[string]interface{}{
-				"url": fmt.Sprintf("http://%s:%d/renewSchedules", getOutboundIP().String(), myPort),
+				"url": fmt.Sprintf("http://%s:%d/renewSchedules", ip.String(), myPort),
 			},
 		}},
 	}
