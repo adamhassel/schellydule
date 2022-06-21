@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -210,29 +211,8 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		setStatusMsg(w, status, err.Error())
 		return
 	}
-	conf := config.GetConf()
-	// get number of hours and max dark hours from request
-	query := req.URL.Query()
-	hours, err := strconv.Atoi(query.Get("hours"))
-	if err != nil || hours == 0 {
-		hours = conf.Hours()
-	}
 
-	// offset is a debugging option, that can be used to adjust how far into the
-	// future we're looking for power prices. It should be a multiple of 24 hours,
-	// but should be 24 during normal ops. If you're manually running the endpoint at
-	// a time when tomorrow's power prices are not yet available, and you want this
-	// endpoint to regenerate today's schedule, set offset to zero (or any number
-	// less than the number of hours left in the day. Same same).
-	offset, err := strconv.Atoi(query.Get("offset"))
-	if err != nil {
-		fmt.Printf("error parsing %s, using 0", query.Get("offset"))
-		offset = 0
-	}
-	darkHours, err := strconv.Atoi(query.Get("dark"))
-	if err != nil {
-		darkHours = conf.DarkHours()
-	}
+	query := req.URL.Query()
 
 	// override allows you to force this endpoint to work at all hours of the day.
 	override, _ := strconv.ParseBool(query.Get("override")) // if parse error, just assume false and continue
@@ -242,26 +222,16 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fmt.Println("PARAMS:", hours, darkHours, offset)
-	hp, err := generateSchedule(hours, darkHours, time.Duration(offset)*time.Hour)
+	hps, err := reqGenerateSchedule(query, false)
 	if err != nil {
 		setStatusMsg(w, http.StatusBadGateway, fmt.Errorf("generateSchedule: %w", err))
 		return
 	}
+
 	enable, err := shelly.GetInputState(ip)
 	if err != nil {
 		setStatusMsg(w, http.StatusBadGateway, err)
 		return
-	}
-
-	// handle the special case where the last stop-hour is midnight. This creates
-	// confusion, because then we might have ambiguity, if there's also a midnight
-	// start time. So set that to 23:59 instead (and minute resolution, not seconds, because Shelly doesn't show seconds).
-	hps := hp.Schedule()
-	for i, j := range hps {
-		if t := j.Stop; t.Hour() == 0 {
-			hps[i].Stop = t.Add(-1 * time.Minute)
-		}
 	}
 
 	s := shelly.ShellySchedule(hps, enable)
@@ -299,6 +269,50 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// reqGenerateSchedule handle request parameters and generates a schedule. if
+// `tomorrow` is true, ignores offset and tries to generate for tomorrow.
+func reqGenerateSchedule(query url.Values, tomorrow bool) (schedule.Schedule, error) {
+	conf := config.GetConf()
+	hours, err := strconv.Atoi(query.Get("hours"))
+	if err != nil || hours == 0 {
+		hours = conf.Hours()
+	}
+
+	// offset is a debugging option, that can be used to adjust how far into the
+	// future we're looking for power prices. It should be a multiple of 24 hours,
+	// but should be 0 during normal ops. If you're manually running the endpoint at
+	// a time when tomorrow's power prices are not yet available, and you want this
+	// endpoint to regenerate today's schedule, set offset to zero (or any number
+	// less than the number of hours left in the day. Same same).
+	offset, err := strconv.Atoi(query.Get("offset"))
+	if err != nil {
+		fmt.Printf("error parsing %s, using 0", query.Get("offset"))
+		offset = 0
+	}
+	if tomorrow {
+		offset = 24
+	}
+	darkHours, err := strconv.Atoi(query.Get("dark"))
+	if err != nil {
+		darkHours = conf.DarkHours()
+	}
+	fmt.Println("PARAMS:", hours, darkHours, offset)
+	hp, err := generateSchedule(hours, darkHours, time.Duration(offset)*time.Hour)
+	if err != nil {
+		return schedule.Schedule{}, fmt.Errorf("generateSchedule: %w", err)
+	}
+	// handle the special case where the last stop-hour is midnight. This creates
+	// confusion, because then we might have ambiguity, if there's also a midnight
+	// start time. So set that to 23:59 instead (and minute resolution, not seconds, because Shelly doesn't show seconds).
+	hps := hp.Schedule()
+	for i, j := range hps {
+		if t := j.Stop; t.Hour() == 0 {
+			hps[i].Stop = t.Add(-1 * time.Minute)
+		}
+	}
+	return hps, nil
+}
+
 // showSchedulesHandler is a GET controller, that returns the currently configured schedule
 func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	ip, err := getIP(req, true)
@@ -320,16 +334,30 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	schedules, err := shelly.GetSchedules(ip)
+	tomorrow, err := strconv.ParseBool(q.Get("tomorrow"))
 	if err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err.Error())
-		return
+		fmt.Printf("error parsing bool from '%s', assuming false", q.Get("tomorrow"))
 	}
+	var parsed schedule.Schedule
+	if tomorrow {
+		var err error
+		parsed, err = reqGenerateSchedule(q, tomorrow)
+		if err != nil {
+			setStatusMsg(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		schedules, err := shelly.GetSchedules(ip)
+		if err != nil {
+			setStatusMsg(w, http.StatusBadGateway, err)
+			return
+		}
 
-	parsed, err := schellydule.Schedule(schedules)
-	if err != nil {
-		setStatusMsg(w, http.StatusInternalServerError, err.Error())
-		return
+		parsed, err = schellydule.Schedule(schedules)
+		if err != nil {
+			setStatusMsg(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	var out []byte
 	if out, err = json.Marshal(parsed.Map(watts)); err != nil {
