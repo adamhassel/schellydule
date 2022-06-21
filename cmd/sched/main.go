@@ -245,7 +245,7 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	fmt.Println("PARAMS:", hours, darkHours, offset)
 	hp, err := generateSchedule(hours, darkHours, time.Duration(offset)*time.Hour)
 	if err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
+		setStatusMsg(w, http.StatusBadGateway, fmt.Errorf("generateSchedule: %w", err))
 		return
 	}
 	enable, err := shelly.GetInputState(ip)
@@ -310,15 +310,29 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		setStatusMsg(w, status, err.Error())
 		return
 	}
-
+	q := req.URL.Query()
+	ws := q.Get("watts")
+	watts := 1000.0
+	if ws != "" {
+		watts, err = strconv.ParseFloat(ws, 64)
+		if err != nil {
+			setStatusMsg(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	schedules, err := shelly.GetSchedules(ip)
+	if err != nil {
+		setStatusMsg(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
 	parsed, err := schellydule.Schedule(schedules)
 	if err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	var out []byte
-	if out, err = json.Marshal(parsed.Strings()); err != nil {
+	if out, err = json.Marshal(parsed.Map(watts)); err != nil {
 		setStatusMsg(w, http.StatusInternalServerError, err.Error())
 		return
 	}

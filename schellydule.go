@@ -242,7 +242,7 @@ func Schedule(s shelly.Schedules) (sch.Schedule, error) {
 
 		e.Start = js.TriggerTime()
 		e.Stop, err = match.Time()
-		//e.Cost = js.Cost()
+		e.Cost = js.Cost()
 		if err != nil {
 			return nil, err
 		}
