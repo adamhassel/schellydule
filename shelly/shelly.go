@@ -52,6 +52,9 @@ const (
 
 func GetSchedules(ip fmt.Stringer) (Schedules, error) {
 	body, _, err := DoRPCCall(ip, "GET", "Schedule.List", nil, nil)
+	if err != nil {
+		return Schedules{}, err
+	}
 	var schedules Schedule
 	fmt.Println(string(body))
 	err = json.Unmarshal(body, &schedules)

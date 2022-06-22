@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.0.0
 	github.com/adamhassel/errors v0.0.0-20210901061748-bb45860d4813
 	github.com/adamhassel/power v0.0.0-20220612115315-fa64b5019a64
-	github.com/adamhassel/schedule v0.0.0-20220620135537-b0df667264aa
+	github.com/adamhassel/schedule v0.0.0-20220621081102-12a7e6f4dc26
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/thlib/go-timezone-local v0.0.0-20210907160436-ef149e42d28e
 	github.com/tidwall/gjson v1.14.1
