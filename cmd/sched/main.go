@@ -56,7 +56,7 @@ func main() {
 
 	http.HandleFunc("/getInput", getInputHandler)
 
-	http.HandleFunc("/powerPrices", httpapi.GetPowerPricesConfigHandler(conf))
+	http.HandleFunc("/powerPrices", httpapi.GetPowerPricesConfigHandler(conf, true))
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
@@ -224,21 +224,75 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		setStatusMsg(w, http.StatusBadRequest, "come back between 00:00 and 01:00")
 		return
 	}
+	if err := generateAndSetSchedule(query, ip); err != nil {
+		if errors.Is(err, power.ErrEloverblik) {
+			go func() {
+				var i uint
+				var ok bool
+				// retry ev. 10 minutes for 23 hours
+				max := uint(23 * time.Hour * 6)
+				for RetryWait(!ok, &i, max, 10*time.Minute, nil) {
+					err = generateAndSetSchedule(query, ip)
+					ok = err == nil
+				}
+				log.Printf("after %d attempt(s), the result was %s", i, err)
+			}()
+			log.Print("error contacting eloverblik, retrying")
+			setStatusMsg(w, http.StatusAccepted, err)
+		} else {
+			log.Print("error generating schedule")
+			setStatusMsg(w, http.StatusBadGateway, err)
+		}
+	}
+	return
+}
 
+// RetryWait will increment counter, sleep for `sleep` and return true if retry should be attempted (`retryif` is true and attempts remaining).
+// Returns `false` immediately (not incrementing counter) if `retryif` is false or max retries exceeded.
+// Use for limited retries with (possibly zero-length) pause. Does not sleep on initial attempt (assuming counter starts at zero).
+// If `f` is non-nil, f will execute on exhaustion of attempts
+// Use in a loop, e.g. like:
+// func f() error {
+//   var i uint
+//   var ok bool
+//   f := func() {
+//  	log.Printf("attempts failed: %s", err)
+//   }
+//   for RetryWait(!ok, &i, maxAttempts, 0, f) {
+//	     err = do_stuff()
+//       ok = err == nil
+//   }
+//   return err
+// }
+func RetryWait(retryif bool, counter *uint, max uint, sleep time.Duration, f func()) bool {
+	if !retryif {
+		return false
+	}
+	if *counter >= max {
+		if f != nil {
+			f()
+		}
+		return false
+	}
+	if *counter != 0 {
+		time.Sleep(sleep)
+	}
+	*counter++
+	return true
+}
+
+func generateAndSetSchedule(query url.Values, ip fmt.Stringer) error {
 	hps, err := reqGenerateSchedule(query, false)
 	if err != nil {
-		setStatusMsg(w, http.StatusBadGateway, fmt.Errorf("generateSchedule: %w", err))
-		return
+		return fmt.Errorf("generateSchedule: %w", err)
 	}
 
 	enable, err := shelly.GetInputState(ip)
 	if err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
 
 	s := shelly.ShellySchedule(hps, enable)
-
 	// FXIME: this is a hacky workaround, which is a quick-and-dirty fix for cron
 	// being annoying and not care about anything outside the current day (the way
 	// it's used here).
@@ -247,29 +301,25 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	// currently running, which was supposed to end at midnight. We can stop that
 	// now, unless we're running manually with 'override'
 	if err := shelly.TurnOff(ip); err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
 
 	//Delete all schedules
 	if err := shelly.DeleteAllSchedules(ip); err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
 	if err := shelly.CreateSchedule(ip, s); err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
 
 	if err := setSwitchToSchedule(ip, s.Jobs); err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
 
 	if err := shelly.CreateScheduleRefresherSchedule(ip, port); err != nil {
-		setStatusMsg(w, http.StatusBadGateway, err)
-		return
+		return err
 	}
+	return nil
 }
 
 // reqGenerateSchedule handle request parameters and generates a schedule. if
