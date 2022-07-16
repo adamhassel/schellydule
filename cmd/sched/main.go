@@ -14,6 +14,7 @@ import (
 
 	"github.com/adamhassel/errors"
 	"github.com/adamhassel/power"
+	"github.com/adamhassel/power/httpapi"
 	"github.com/adamhassel/schedule"
 	"github.com/adamhassel/schellydule"
 	"github.com/adamhassel/schellydule/config"
@@ -54,6 +55,8 @@ func main() {
 	http.HandleFunc("/showSchedules", showSchedulesHandler)
 
 	http.HandleFunc("/getInput", getInputHandler)
+
+	http.HandleFunc("/powerPrices", httpapi.GetPowerPricesConfigHandler(conf))
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
@@ -338,8 +341,13 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		fmt.Printf("error parsing bool from '%s', assuming false", q.Get("tomorrow"))
 	}
+	recalc, err := strconv.ParseBool(q.Get("recalc"))
+	if err != nil {
+		fmt.Printf("error parsing bool from '%s', assuming false", q.Get("recalc"))
+	}
+
 	var parsed schedule.Schedule
-	if tomorrow {
+	if tomorrow || recalc {
 		var err error
 		parsed, err = reqGenerateSchedule(q, tomorrow)
 		if err != nil {
@@ -370,17 +378,13 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 func generateSchedule(length, maxDark int, offset time.Duration) (schedule.HourPrices, error) {
 	conf := config.GetConf()
 	tomorrow := schedule.Hour(time.Now().Add(offset), 0)
-	prices, err := power.Prices(tomorrow, tomorrow.Add(24*time.Hour), conf.MID(), conf.Token())
+	prices, err := power.Prices(tomorrow, tomorrow.Add(24*time.Hour), conf, true)
 	if err != nil {
 		return nil, err
 	}
-	list, err := schedule.FPToHourPrices(prices).PruneNightHours(maxDark)
+	list := schedule.FPToHourPrices(prices)
 
-	if err != nil {
-		return nil, err
-	}
-
-	return list.NCheapest(length), nil
+	return list.NCheapest(length, maxDark)
 }
 
 func setStatusMsg(w http.ResponseWriter, status int, msg interface{}) {
