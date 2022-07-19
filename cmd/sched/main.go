@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/adamhassel/schedule"
 	"github.com/adamhassel/schellydule"
 	"github.com/adamhassel/schellydule/config"
+	contx "github.com/adamhassel/schellydule/contx"
 	"github.com/adamhassel/schellydule/shelly"
 )
 
@@ -48,7 +50,6 @@ func main() {
 	if p := conf.Port(); p != 0 && port != defaultPort {
 		port = p
 	}
-
 	http.HandleFunc("/enableSchedules", enableScheduleHandler)
 	http.HandleFunc("/disableSchedules", disableScheduleHandler)
 	http.HandleFunc("/renewSchedules", renewSchedulesHandler)
@@ -96,6 +97,7 @@ func getIP(req *http.Request, allowInQuery bool) (net.IP, error) {
 
 func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 	// find the originating IP, where we'll be sending the callbacks
+	ctx := contx.ProcessCommon(req)
 	ip, err := getIP(req, true)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -106,14 +108,14 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	//	1. Get list of all schedules
-	schedules, err := shelly.GetSchedules(ip)
+	schedules, err := shelly.GetSchedules(ctx, ip)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
 
 	// 2. Set switch according to schedule
-	if err := setSwitchToSchedule(ip, schedules); err != nil {
+	if err := setSwitchToSchedule(ctx, ip, schedules); err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
@@ -126,7 +128,7 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 		}
 		ids = append(ids, s.Id)
 	}
-	if err := shelly.EnableSchedules(ip, ids...); err != nil {
+	if err := shelly.EnableSchedules(ctx, ip, ids...); err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
@@ -136,7 +138,7 @@ func enableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 // setSwitchToSchedule refreshes the on/off state according to the schedule
-func setSwitchToSchedule(ip fmt.Stringer, schedules shelly.Schedules) error {
+func setSwitchToSchedule(ctx context.Context, ip fmt.Stringer, schedules shelly.Schedules) error {
 	paired, err := schellydule.ScheduleToPaired(schedules)
 	if err != nil {
 		return err
@@ -144,7 +146,6 @@ func setSwitchToSchedule(ip fmt.Stringer, schedules shelly.Schedules) error {
 	// Determine if the schedules currently demand on or off
 	now := time.Now()
 	var on bool
-	fmt.Printf("Now is %s\n", now.Format("15:04"))
 	for _, p := range paired {
 		fmt.Printf("On at %s, off at %s\n", p.On.Format("15:04"), p.Off.Format("15:04"))
 		if now.After(p.On) && now.Before(p.Off) {
@@ -154,10 +155,11 @@ func setSwitchToSchedule(ip fmt.Stringer, schedules shelly.Schedules) error {
 		}
 	}
 	//  3. Set switch to what the schedules demand
-	return shelly.SetSwitch(ip, shelly.State(on))
+	return shelly.SetSwitch(ctx, ip, shelly.State(on))
 }
 
 func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
+	ctx := contx.ProcessCommon(req)
 	ip, err := getIP(req, true)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -168,14 +170,14 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// 1. Set switch "on"
-	if err := shelly.TurnOn(ip); err != nil {
+	if err := shelly.TurnOn(ctx, ip); err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
 
 	// 2. Get list of all schedules
-	schedules, err := shelly.GetSchedules(ip)
+	schedules, err := shelly.GetSchedules(nil, ip)
 	if err != nil {
 		fmt.Println("getschedules", err)
 		w.WriteHeader(http.StatusBadGateway)
@@ -191,7 +193,7 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 		}
 		ids = append(ids, s.Id)
 	}
-	if err := shelly.DisableSchedules(ip, ids...); err != nil {
+	if err := shelly.DisableSchedules(ctx, ip, ids...); err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusBadGateway)
 		return
@@ -205,6 +207,7 @@ func disableScheduleHandler(w http.ResponseWriter, req *http.Request) {
 // Should only be called after between 00:00 and 01:00 local time, and will return 400 if not
 // (unless override active)
 func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
+	ctx := contx.ProcessCommon(req)
 	ip, err := getIP(req, true)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -224,7 +227,7 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 		setStatusMsg(w, http.StatusBadRequest, "come back between 00:00 and 01:00")
 		return
 	}
-	if err := generateAndSetSchedule(query, ip); err != nil {
+	if err := generateAndSetSchedule(ctx, query, ip); err != nil {
 		if errors.Is(err, power.ErrEloverblik) {
 			go func() {
 				var i uint
@@ -232,7 +235,7 @@ func renewSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 				// retry ev. 10 minutes for 23 hours
 				max := uint(23 * time.Hour * 6)
 				for RetryWait(!ok, &i, max, 10*time.Minute, nil) {
-					err = generateAndSetSchedule(query, ip)
+					err = generateAndSetSchedule(ctx, query, ip)
 					ok = err == nil
 				}
 				log.Printf("after %d attempt(s), the result was %s", i, err)
@@ -281,13 +284,13 @@ func RetryWait(retryif bool, counter *uint, max uint, sleep time.Duration, f fun
 	return true
 }
 
-func generateAndSetSchedule(query url.Values, ip fmt.Stringer) error {
+func generateAndSetSchedule(ctx context.Context, query url.Values, ip fmt.Stringer) error {
 	hps, err := reqGenerateSchedule(query, false)
 	if err != nil {
 		return fmt.Errorf("generateSchedule: %w", err)
 	}
 
-	enable, err := shelly.GetInputState(ip)
+	enable, err := shelly.GetInputState(ctx, ip)
 	if err != nil {
 		return err
 	}
@@ -296,27 +299,36 @@ func generateAndSetSchedule(query url.Values, ip fmt.Stringer) error {
 	// FXIME: this is a hacky workaround, which is a quick-and-dirty fix for cron
 	// being annoying and not care about anything outside the current day (the way
 	// it's used here).
-	//
+
+	//	if len(hps) != s.Hours() {
+	log.Printf("Schedule is %d hours, should be %d", hps.Hours(), s.Hours())
+	//}
+
 	// Switch off the shelly. Maybe there's a schedule that's
 	// currently running, which was supposed to end at midnight. We can stop that
-	// now, unless we're running manually with 'override'
-	if err := shelly.TurnOff(ip); err != nil {
-		return err
+	// now, unless we're running manually with 'override'. If schedules are disabled, don't do this.
+	if enable {
+		if err := shelly.TurnOff(ctx, ip); err != nil {
+			return err
+		}
 	}
 
 	//Delete all schedules
-	if err := shelly.DeleteAllSchedules(ip); err != nil {
+	if err := shelly.DeleteAllSchedules(ctx, ip); err != nil {
 		return err
 	}
-	if err := shelly.CreateSchedule(ip, s); err != nil {
-		return err
-	}
-
-	if err := setSwitchToSchedule(ip, s.Jobs); err != nil {
+	if err := shelly.CreateSchedule(ctx, ip, s); err != nil {
 		return err
 	}
 
-	if err := shelly.CreateScheduleRefresherSchedule(ip, port); err != nil {
+	// Turn shelly on or off according to schedule, if schedules are enabled. If not, don't touch.
+	if enable {
+		if err := setSwitchToSchedule(ctx, ip, s.Jobs); err != nil {
+			return err
+		}
+	}
+
+	if err := shelly.CreateScheduleRefresherSchedule(ctx, ip, port); err != nil {
 		return err
 	}
 	return nil
@@ -351,6 +363,7 @@ func reqGenerateSchedule(query url.Values, tomorrow bool) (schedule.Schedule, er
 	}
 	fmt.Println("PARAMS:", hours, darkHours, offset)
 	hp, err := generateSchedule(hours, darkHours, time.Duration(offset)*time.Hour)
+	log.Printf("generated schedule is %d hours", len(hp))
 	if err != nil {
 		return schedule.Schedule{}, fmt.Errorf("generateSchedule: %w", err)
 	}
@@ -363,6 +376,7 @@ func reqGenerateSchedule(query url.Values, tomorrow bool) (schedule.Schedule, er
 			hps[i].Stop = t.Add(-1 * time.Minute)
 		}
 	}
+	log.Printf("hps: %#v", hps)
 	return hps, nil
 }
 
@@ -405,7 +419,7 @@ func showSchedulesHandler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	} else {
-		schedules, err := shelly.GetSchedules(ip)
+		schedules, err := shelly.GetSchedules(nil, ip)
 		if err != nil {
 			setStatusMsg(w, http.StatusBadGateway, err)
 			return
@@ -454,12 +468,13 @@ func setStatusMsg(w http.ResponseWriter, status int, msg interface{}) {
 }
 
 func getInputHandler(w http.ResponseWriter, req *http.Request) {
+	ctx := contx.ProcessCommon(req)
 	ip, err := getIP(req, true)
 	if err != nil {
 		setStatusMsg(w, http.StatusBadRequest, err)
 		return
 	}
-	state, err := shelly.GetInputState(ip)
+	state, err := shelly.GetInputState(ctx, ip)
 	if err != nil {
 		setStatusMsg(w, http.StatusBadGateway, err)
 		return

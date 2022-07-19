@@ -3,9 +3,11 @@ package shelly
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/adamhassel/errors"
 	"github.com/adamhassel/schedule"
+	"github.com/adamhassel/schellydule/contx"
 	"github.com/robfig/cron/v3"
 	"github.com/tidwall/gjson"
 )
@@ -50,8 +53,34 @@ const (
 	StateOff State = false
 )
 
-func GetSchedules(ip fmt.Stringer) (Schedules, error) {
-	body, _, err := DoRPCCall(ip, "GET", "Schedule.List", nil, nil)
+func (s Schedule) Hours() int {
+	h := 0
+	start := true
+	var begin, end time.Time
+	for _, j := range s.Jobs {
+		var err error
+		if start {
+			begin, err = j.Time()
+			if err != nil {
+				panic(err)
+			}
+			start = false
+			continue
+		}
+		end, err = j.Time()
+		if err != nil {
+			panic(err)
+		}
+		h += int(end.Sub(begin).Hours())
+		start = true
+		begin = time.Time{}
+		end = time.Time{}
+	}
+	return h
+}
+
+func GetSchedules(ctx context.Context, ip fmt.Stringer) (Schedules, error) {
+	body, _, err := DoRPCCall(ctx, ip, "GET", "Schedule.List", nil, nil)
 	if err != nil {
 		return Schedules{}, err
 	}
@@ -121,52 +150,52 @@ func (j JobSpec) HasMethod(m string) bool {
 	return stringInSlice(m, j.Methods())
 }
 
-func enableDisableSchedules(dest fmt.Stringer, enable bool, ids ...int) error {
+func enableDisableSchedules(ctx context.Context, dest fmt.Stringer, enable bool, ids ...int) error {
 	for _, id := range ids {
-		if _, _, err := DoGet(dest, "Schedule.Update", map[string]string{"id": fmt.Sprintf("%d", id), "enable": fmt.Sprintf("%t", enable)}); err != nil {
+		if _, _, err := DoGet(ctx, dest, "Schedule.Update", map[string]string{"id": fmt.Sprintf("%d", id), "enable": fmt.Sprintf("%t", enable)}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func EnableSchedules(dest fmt.Stringer, ids ...int) error {
-	return enableDisableSchedules(dest, true, ids...)
+func EnableSchedules(ctx context.Context, dest fmt.Stringer, ids ...int) error {
+	return enableDisableSchedules(ctx, dest, true, ids...)
 }
 
-func DisableSchedules(dest fmt.Stringer, ids ...int) error {
-	return enableDisableSchedules(dest, false, ids...)
+func DisableSchedules(ctx context.Context, dest fmt.Stringer, ids ...int) error {
+	return enableDisableSchedules(ctx, dest, false, ids...)
 }
 
 // TurnOn sets the Shelly's switch to the "On" state
-func TurnOn(dest fmt.Stringer) error {
-	return SetSwitch(dest, StateOn)
+func TurnOn(ctx context.Context, dest fmt.Stringer) error {
+	return SetSwitch(ctx, dest, StateOn)
 }
 
 // TurnOff sets the Shelly's switch to the "Off" state
-func TurnOff(dest fmt.Stringer) error {
-	return SetSwitch(dest, StateOff)
+func TurnOff(ctx context.Context, dest fmt.Stringer) error {
+	return SetSwitch(ctx, dest, StateOff)
 }
 
 // SetSwitch sets the Shelly's switch to the given state
-func SetSwitch(dest fmt.Stringer, state State) error {
-	_, _, err := DoGet(dest, "Switch.Set", map[string]string{"id": "0", "on": fmt.Sprintf("%t", state)})
+func SetSwitch(ctx context.Context, dest fmt.Stringer, state State) error {
+	_, _, err := DoGet(ctx, dest, "Switch.Set", map[string]string{"id": "0", "on": fmt.Sprintf("%t", state)})
 	return err
 }
 
-func DeleteAllSchedules(dest fmt.Stringer) error {
-	_, _, err := DoGet(dest, "Schedule.DeleteAll", nil)
+func DeleteAllSchedules(ctx context.Context, dest fmt.Stringer) error {
+	_, _, err := DoGet(ctx, dest, "Schedule.DeleteAll", nil)
 	return err
 }
 
-func CreateSchedule(dest fmt.Stringer, s Schedule) error {
+func CreateSchedule(ctx context.Context, dest fmt.Stringer, s Schedule) error {
 	for _, j := range s.Jobs {
 		reqBody, err := json.Marshal(j)
 		if err != nil {
 			return err
 		}
 		fmt.Println(string(reqBody))
-		if _, _, err := DoRPCCall(dest, "POST", "Schedule.Create", nil, reqBody); err != nil {
+		if _, _, err := DoRPCCall(ctx, dest, "POST", "Schedule.Create", nil, reqBody); err != nil {
 			return err
 		}
 	}
@@ -186,7 +215,7 @@ func getOutboundIP() (net.IP, error) {
 }
 
 // CreateScheduleRefresherSchedule will make sure that the schedules are refreshed every day @ 23.55
-func CreateScheduleRefresherSchedule(dest fmt.Stringer, myPort int) error {
+func CreateScheduleRefresherSchedule(ctx context.Context, dest fmt.Stringer, myPort int) error {
 	t := schedule.Hour(time.Now(), 0).Add(1 * time.Minute)
 	ip, err := getOutboundIP()
 	if err != nil {
@@ -208,13 +237,13 @@ func CreateScheduleRefresherSchedule(dest fmt.Stringer, myPort int) error {
 	if err != nil {
 		return err
 	}
-	_, _, err = DoRPCCall(dest, "POST", "Schedule.Create", nil, reqBody)
+	_, _, err = DoRPCCall(ctx, dest, "POST", "Schedule.Create", nil, reqBody)
 	return err
 }
 
-// Get input state returns true if the controller input is on, false otherwise
-func GetInputState(dest fmt.Stringer) (bool, error) {
-	body, _, err := DoGet(dest, "Shelly.GetStatus", nil)
+// GetInputState returns true if the controller input is on, false otherwise
+func GetInputState(ctx context.Context, dest fmt.Stringer) (bool, error) {
+	body, _, err := DoGet(ctx, dest, "Shelly.GetStatus", nil)
 	if err != nil {
 		return false, err
 	}
@@ -222,7 +251,7 @@ func GetInputState(dest fmt.Stringer) (bool, error) {
 }
 
 // DoRPCCall calls RPC endpoints towards the Shelly. Returns body (or nil if empty), http response code and an error
-func DoRPCCall(dest fmt.Stringer, httpMethod, method string, options map[string]string, reqBody []byte) ([]byte, int, error) {
+func DoRPCCall(ctx context.Context, dest fmt.Stringer, httpMethod, method string, options map[string]string, reqBody []byte) ([]byte, int, error) {
 	u := url.URL{
 		Scheme: "http",
 		Host:   dest.String(),
@@ -240,6 +269,10 @@ func DoRPCCall(dest fmt.Stringer, httpMethod, method string, options map[string]
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
+	if contx.Pretend(ctx) {
+		log.Print("just pretending, not doing RPC")
+		return nil, http.StatusOK, nil
+	}
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -256,8 +289,8 @@ func DoRPCCall(dest fmt.Stringer, httpMethod, method string, options map[string]
 	return body, http.StatusOK, nil
 }
 
-func DoGet(dest fmt.Stringer, method string, options map[string]string) ([]byte, int, error) {
-	return DoRPCCall(dest, "GET", method, options, nil)
+func DoGet(ctx context.Context, dest fmt.Stringer, method string, options map[string]string) ([]byte, int, error) {
+	return DoRPCCall(ctx, dest, http.MethodGet, method, options, nil)
 }
 
 func stringInSlice(s string, sl []string) bool {

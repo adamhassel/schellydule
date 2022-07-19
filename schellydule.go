@@ -1,13 +1,12 @@
 package schellydule
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	errors2 "github.com/adamhassel/errors"
+	"github.com/adamhassel/errors"
 	sch "github.com/adamhassel/schedule"
 	"github.com/adamhassel/schellydule/shelly"
 	"github.com/robfig/cron/v3"
@@ -206,7 +205,7 @@ func FindMatching(j shelly.JobSpec, s shelly.Schedules) (shelly.JobSpec, error) 
 	}
 	// find the correct time (which is the one with the highest/lowest, depending on matching) in the list
 	if len(indexes) == 0 {
-		return shelly.JobSpec{}, errors2.New("no matching jobspec")
+		return shelly.JobSpec{}, errors.New("no matching jobspec")
 	}
 	sort.Ints(indexes)
 	var i int
